@@ -1,6 +1,5 @@
 {
   inputs = {
-    #flake-schemas.url = "github:DeterminateSystems/flake-schemas";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
 
     rust-overlay = {
@@ -22,6 +21,30 @@
       });
     in {
       
+      packages = forEachSupportedSystem ({ pkgs }: {
+        default = pkgs.rustPlatform.buildRustPackage {
+          pname = "datestamp_files";
+          version = "0.1.0";
+          src = ./.;
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+          };
+
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+          ];
+
+          buildInputs = with pkgs; [
+            openssl
+          ];
+
+          # If your package has any runtime dependencies, list them here
+          propagatedBuildInputs = with pkgs; [
+            # Add any runtime dependencies here
+          ];
+        };
+      });
+
       devShells = forEachSupportedSystem ({ pkgs }: {
           default = pkgs.mkShell {
           # Pinned packages available in the environment

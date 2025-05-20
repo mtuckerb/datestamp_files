@@ -7,7 +7,8 @@ use clap::Parser;
 use std::path::Path;
 use reqwest::blocking::{ ClientBuilder};
 use serde_json::Value; // Added from update
-use chrono::{DateTime, Utc, Local, TimeZone}; // Updated from update
+use regex::Regex; // Added from update
+use chrono::{DateTime, Utc, Local, TimeZone, NaiveDate}; // Updated from update
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -76,20 +77,6 @@ fn main() {
 fn rename_file(path: &Path) -> std::io::Result<()> {
     rename_single_file(path)
 }
-
-fn rename_single_file(path: &Path) -> std::io::Result<()> {
-    let metadata = fs::metadata(path)?;
-    let created: DateTime<Local> = metadata.created()?.into();
-    let date_str = created.format("%Y-%m-%d").to_string();
-
-    let file_name = path.file_name().unwrap().to_str().unwrap();
-    let new_name = format!("{} - {}", date_str, file_name);
-    let new_path = path.with_file_name(new_name);
-
-    fs::rename(path, &new_path)?;
-    println!("Renamed {:?} to {:?}", path, new_path);
-    Ok(())
-}
 fn rename_files_in_directory(dir: &Path) -> std::io::Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
@@ -111,6 +98,35 @@ fn rename_files_in_directory_recursive(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+fn rename_single_file(path: &Path) -> std::io::Result<()> {
+    let file_name = path.file_name().unwrap().to_str().unwrap();
+    
+    // Check if the file already starts with a date in the correct format
+    if Regex::new(r"^\d{4}-\d{2}-\d{2}").unwrap().is_match(file_name) {
+        println!("Skipping {:?} as it already starts with a date in the correct format", path);
+        return Ok(());
+    }
+
+    // Try to parse date from filename
+    if let Some(date) = parse_date_from_filename(file_name) {
+        let date_str = date.format("%Y-%m-%d").to_string();
+        let new_name = format!("{} - {}", date_str, file_name);
+        let new_path = path.with_file_name(new_name);
+        fs::rename(path, &new_path)?;
+        println!("Renamed {:?} to {:?}", path, new_path);
+    } else {
+        // If no date found in filename, use file creation date
+        let metadata = fs::metadata(path)?;
+        let created: DateTime<Local> = metadata.created()?.into();
+        let date_str = created.format("%Y-%m-%d").to_string();
+        let new_name = format!("{} - {}", date_str, file_name);
+        let new_path = path.with_file_name(new_name);
+        fs::rename(path, &new_path)?;
+        println!("Renamed {:?} to {:?}", path, new_path);
+    }
+    Ok(())
+}
+
 
 fn rename_file_obsidian(path: &str, api_url: &str, api_key: &str) -> std::io::Result<()> {
     rename_single_file_obsidian(path, api_url, api_key)
@@ -120,6 +136,14 @@ fn rename_single_file_obsidian(path: &str, api_url: &str, api_key: &str) -> std:
     let client = create_insecure_client();
     if path.is_empty() {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Path cannot be empty"));
+    }
+
+    let file_name = Path::new(path).file_name().unwrap().to_str().unwrap();
+
+    // Check if the file already starts with a date in the correct format
+    if Regex::new(r"^\d{4}-\d{2}-\d{2}").unwrap().is_match(file_name) {
+        println!("Skipping {} as it already starts with a date in the correct format", path);
+        return Ok(());
     }
 
     let response = client.get(format!("{}/vault/{}", api_url, path))
@@ -132,18 +156,19 @@ fn rename_single_file_obsidian(path: &str, api_url: &str, api_key: &str) -> std:
         let file_info: serde_json::Value = response.json()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         
-        dbg!("File info: {:?}", &file_info["stat"]["ctime"]);
-        
-        let created = file_info["stat"]["ctime"]
-            .as_i64()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Missing or invalid creation time"))?;
-        
-        let date_time: DateTime<Utc> = Utc.timestamp_millis_opt(created).single()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid timestamp"))?;
-        
-        let date_str = date_time.format("%Y-%m-%d").to_string();
+        let date_str = if let Some(date) = parse_date_from_filename(file_name) {
+            date.format("%Y-%m-%d").to_string()
+        } else {
+            let created = file_info["stat"]["ctime"]
+                .as_i64()
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Missing or invalid creation time"))?;
+            
+            let date_time: DateTime<Utc> = Utc.timestamp_millis_opt(created).single()
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid timestamp"))?;
+            
+            date_time.format("%Y-%m-%d").to_string()
+        };
 
-        let file_name = Path::new(path).file_name().unwrap().to_str().unwrap();
         let new_name = format!("{} - {}", date_str, file_name);
         let new_path = Path::new(path).with_file_name(&new_name);
         
@@ -233,4 +258,39 @@ fn query_obsidian_vault(path: &str, api_url: &str, api_key: &str) -> std::io::Re
     } else {
         Err(std::io::Error::new(std::io::ErrorKind::Other, format!("API error: {}. Response body: {}", &status, body)))
     }
+}
+
+fn parse_date_from_filename(filename: &str) -> Option<NaiveDate> {
+    fn ymd(y: i32, m: i32, d: i32) -> Option<NaiveDate> {
+        NaiveDate::from_ymd_opt(y, m as u32, d as u32)
+    }
+    fn mdy(m: i32, d: i32, y: i32) -> Option<NaiveDate> {
+        NaiveDate::from_ymd_opt(y, m as u32, d as u32)
+    }
+    fn dmy(d: i32, m: i32, y: i32) -> Option<NaiveDate> {
+        NaiveDate::from_ymd_opt(y, m as u32, d as u32)
+    }
+
+    let date_patterns: [(Regex, fn(i32, i32, i32) -> Option<NaiveDate>); 6] = [
+        (Regex::new(r"^(\d{4})-(\d{2})-(\d{2})").unwrap(), ymd),
+        (Regex::new(r"(\d{4})(\d{2})(\d{2})").unwrap(), ymd),
+        (Regex::new(r"(\d{2})(\d{2})(\d{4})").unwrap(), mdy),
+        (Regex::new(r"(\d{2})-(\d{2})-(\d{4})").unwrap(), mdy),
+        (Regex::new(r"(\d{2})(\d{2})(\d{4})").unwrap(), dmy),
+        (Regex::new(r"(\d{2})-(\d{2})-(\d{4})").unwrap(), dmy),
+    ];
+
+    for (regex, date_constructor) in &date_patterns {
+        if let Some(captures) = regex.captures(filename) {
+            if captures.len() == 4 {
+                let a = captures[1].parse::<i32>().unwrap();
+                let b = captures[2].parse::<i32>().unwrap();
+                let c = captures[3].parse::<i32>().unwrap();
+                if let Some(date) = date_constructor(a, b, c) {
+                    return Some(date);
+                }
+            }
+        }
+    }
+    None
 }
