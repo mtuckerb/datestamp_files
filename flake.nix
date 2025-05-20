@@ -26,7 +26,7 @@
           default = pkgs.mkShell {
           # Pinned packages available in the environment
           packages = with pkgs; [
-            rust-bin.stable."1.81.0".default
+            rust-bin.stable."1.82.0".default
             cargo-bloat
             cargo-edit
             cargo-outdated
@@ -36,6 +36,8 @@
             rustup
             rustc
             curl
+            openssl
+            pkg-config
             libiconv
             cmake
             gcc
