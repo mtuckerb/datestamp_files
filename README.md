@@ -22,3 +22,7 @@ This means that you won't end up with dead links after the rename.
 
 # ToDo
 Might be fun to make this more extensible, so it can rename files based on any search terms… Might be good to make a DSL for the new filename too ¯\_(ツ)_/¯
+
+
+# NixOS
+If you're cool you can add this to your nix system by adding `datestamp-files.url = "github:mtuckerb/datestamp_files";` to your flake input and then 
